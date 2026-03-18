@@ -87,16 +87,47 @@ async function hg(endpoint, key, method = "GET", body) {
 }
 async function getAvatars(key) { const d = await hg("/v2/avatars?limit=100", key); return d?.data?.avatars || []; }
 async function getVoices(key) {
-  const d = await hg("/v2/voices?limit=100", key);
+  // 日本語音声専用エンドポイント
+  const d = await hg("/v2/voices?limit=200", key);
   const all = d?.data?.voices || [];
-  const jp = all.filter(v => v.language === "Japanese" || v.locale?.startsWith("ja"));
-  return jp.length > 0 ? jp : all.slice(0, 50);
+  // 日本語フィルター（複数条件で確実に絞り込む）
+  const jp = all.filter(v =>
+    v.language === "Japanese" ||
+    v.language === "ja" ||
+    v.locale?.startsWith("ja") ||
+    v.language_code === "ja" ||
+    (v.name || "").toLowerCase().includes("japanese") ||
+    (v.display_name || "").toLowerCase().includes("japan") ||
+    (v.display_name || "").toLowerCase().includes("japanese")
+  );
+  // 日本語が見つかれば日本語のみ、見つからなければ全件返す
+  return jp.length > 0 ? jp : all;
 }
 async function makeVideo({ key, avatarId, voiceId, script, bgColor }) {
-  return hg("/v2/video/generate", key, "POST", {
-    video_inputs: [{ character: { type: "avatar", avatar_id: avatarId, avatar_style: "normal" }, voice: { type: "text", input_text: script, voice_id: voiceId }, background: { type: "color", value: bgColor || "#f0f4ff" } }],
-    dimension: { width: 1280, height: 720 }
-  });
+  // voice設定: voice_idがある場合は指定、ない場合はHeyGenのデフォルト音声を使用
+  const voiceConfig = voiceId
+    ? { type: "text", input_text: script, voice_id: voiceId }
+    : { type: "text", input_text: script, voice_id: "077ab11b14f04ce0b49b5f6e5cc20979" }; // HeyGen デフォルト日本語音声
+
+  const body = {
+    video_inputs: [{
+      character: {
+        type: "avatar",
+        avatar_id: avatarId,
+        avatar_style: "normal"
+      },
+      voice: voiceConfig,
+      background: {
+        type: "color",
+        value: bgColor || "#f8fafc"
+      }
+    }],
+    dimension: { width: 1280, height: 720 },
+    test: false
+  };
+
+  console.log("makeVideo request body:", JSON.stringify(body, null, 2));
+  return hg("/v2/video/generate", key, "POST", body);
 }
 async function getVideoStatus(id, key) { return hg(`/v1/video_status.get?video_id=${id}`, key); }
 async function uploadFile(file, key) {
@@ -261,7 +292,24 @@ function MakeTab({ apiKey, avatars, voices, presets, onLoadAssets, onAddHistory,
     setSLoading(true);
     try {
       const tmpl = preset?.scriptTemplate ? `テンプレート参考：\n${preset.scriptTemplate}\n\n` : "";
-      setScript(await callClaude(`${tmpl}AI動画台本専門家として以下の情報をもとに60秒以内の動画台本を作成してください。\n商品:${form.product}\n事業:${form.bizType}\nターゲット:${form.target||"中小企業経営者"}\n悩み:${form.problem||"動画制作に困っている"}\n特徴:${form.features||"顔出し不要・AI活用・量産可能"}\nCTA:${form.cta||"お気軽にお問い合わせください"}\n条件:1文20字以内・ですます調・句読点丁寧・数字に読み仮名・台本本文のみ出力`, anthropicKey));
+      setScript(await callClaude(`${tmpl}あなたはAI音声読み上げ用の動画台本専門家です。以下の情報をもとに、AIが自然な日本語で読み上げられる台本を作成してください。
+
+商品・サービス名: ${form.product}
+事業タイプ: ${form.bizType}
+ターゲット: ${form.target || "中小企業経営者"}
+解決する悩み: ${form.problem || "動画制作に困っている"}
+特徴・強み: ${form.features || "顔出し不要・AI活用・量産可能"}
+CTA: ${form.cta || "お気軽にお問い合わせください"}
+
+【必須ルール】
+・全体250文字以内（60秒以内に読める量）
+・1文は20文字以内で必ず改行する
+・ですます調で統一する
+・句読点（。、）を丁寧に入れる
+・アルファベットは必ずカタカナに変換する（AI→エーアイ、EC→イーシー、URL→ユーアールエル、CTA→シーティーエー）
+・数字は読み仮名を併記する（3本→さんぽん、10社→じゅっしゃ）
+・英単語・略語は使わない（すべて日本語またはカタカナにする）
+・台本本文のみ出力する（前置き・説明・セクション見出し不要）`, anthropicKey));
     } catch(e) { setScript(`❌ 台本生成エラー：${e.message || "不明なエラー"}\n\n【解決方法】\nVercelのURLでお使いの場合は⚙️設定タブ→Anthropic APIキーを設定してください。\nClaude.aiのチャット上でお使いの場合は再試行してください。`); }
     setSLoading(false);
   };
@@ -435,9 +483,21 @@ function MakeTab({ apiKey, avatars, voices, presets, onLoadAssets, onAddHistory,
                   ))}
                 </div>
               </Panel>
-              <Panel title="🎙️ 音声を選ぶ（日本語）" accent="#4F8EF7">
+              <Panel title="🎙️ 音声を選ぶ（日本語のみ表示）" accent="#4F8EF7">
+                <div style={{ marginBottom: 8, padding: "6px 10px", background: "#0A1E3A", borderRadius: 6, border: "1px solid #4F8EF730", fontSize: 11, color: "#4F8EF7" }}>
+                  🇯🇵 日本語音声のみ表示しています（{voices.length}件）
+                </div>
                 <TI value={vSearch} onChange={setVSearch} placeholder="名前で検索..." style={{ marginBottom: 8 }} />
                 <div style={{ maxHeight: 320, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4 }}>
+                  {/* デフォルト音声選択肢 */}
+                  <div onClick={() => setSelVo({ voice_id: "077ab11b14f04ce0b49b5f6e5cc20979", display_name: "デフォルト日本語音声（推奨）", name: "default-ja", gender: "Female" })}
+                    style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", borderRadius: 7, cursor: "pointer",
+                      border: `1px solid ${selVo?.voice_id === "077ab11b14f04ce0b49b5f6e5cc20979" ? "#4F8EF7" : "#141F38"}`,
+                      background: selVo?.voice_id === "077ab11b14f04ce0b49b5f6e5cc20979" ? "#4F8EF722" : "#030810", marginBottom: 4 }}>
+                    <div style={{ width: 32, height: 32, borderRadius: 5, background: "#4F8EF722", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14 }}>⭐</div>
+                    <div><div style={{ fontSize: 12, fontWeight: 700, color: "#E2E8F0" }}>デフォルト日本語音声（推奨）</div><div style={{ fontSize: 10, color: "#334155" }}>Female · Japanese</div></div>
+                    {selVo?.voice_id === "077ab11b14f04ce0b49b5f6e5cc20979" && <span style={{ color: "#4F8EF7", marginLeft: "auto" }}>✓</span>}
+                  </div>
                   {voices.filter(v => (v.display_name || v.name || "").toLowerCase().includes(vSearch.toLowerCase())).map(v => (
                     <VRow key={v.voice_id} v={v} sel={selVo?.voice_id === v.voice_id} onSel={() => setSelVo(v)} color="#4F8EF7" />
                   ))}
