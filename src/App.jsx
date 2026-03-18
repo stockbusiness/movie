@@ -31,10 +31,13 @@ function detectUrlType(url) {
 function fmtSize(b) { return b < 1048576 ? `${(b/1024).toFixed(1)} KB` : `${(b/1048576).toFixed(1)} MB`; }
 
 // ─── CLAUDE API ─────────────────────────────────────────────
-async function callClaude(prompt) {
+async function callClaude(prompt, anthropicKey) {
+  const headers = { "Content-Type": "application/json" };
+  // Vercel独立運用時はAnthropicキーを直接使用、Claude.ai上ではキー不要
+  if (anthropicKey) headers["x-api-key"] = anthropicKey;
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify({
       model: "claude-sonnet-4-20250514",
       max_tokens: 1000,
@@ -42,6 +45,7 @@ async function callClaude(prompt) {
     })
   });
   const d = await res.json();
+  if (d.error) throw new Error(d.error.message || "Claude APIエラー");
   return d.content?.[0]?.text || "";
 }
 
@@ -105,10 +109,13 @@ export default function App() {
   const [history, setHistory] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [copyData, setCopyData] = useState(null);
+  const [anthropicKey, setAnthropicKey] = useState("");
+  const [anthropicInput, setAnthropicInput] = useState("");
 
   useEffect(() => {
     (async () => {
       const k = await DB.get("apiKey"); if (k) { setApiKey(k); setApiInput(k); }
+      const ak = await DB.get("anthropicKey"); if (ak) { setAnthropicKey(ak); setAnthropicInput(ak); }
       const p = await DB.get("presets"); if (p) setPresets(p);
       const h = await DB.get("history"); if (h) setHistory(h);
       setLoaded(true);
@@ -116,6 +123,7 @@ export default function App() {
   }, []);
 
   const saveKey = async () => { setApiKey(apiInput); await DB.set("apiKey", apiInput); setShowApi(false); };
+  const saveAnthropicKey = async () => { setAnthropicKey(anthropicInput); await DB.set("anthropicKey", anthropicInput); };
   const savePresets = useCallback(async (d) => { setPresets(d); await DB.set("presets", d); }, []);
   const addHistory = useCallback(async (item) => {
     const u = [item, ...history].slice(0, 30); setHistory(u); await DB.set("history", u);
@@ -163,11 +171,11 @@ export default function App() {
 
 
       <div style={{ maxWidth: 1060, margin: "0 auto", padding: "22px 20px" }}>
-        {tab === "make" && <MakeTab apiKey={apiKey} avatars={avatars} voices={voices} presets={presets} onLoadAssets={loadAssets} onAddHistory={addHistory} onSavePreset={savePresets} copyData={copyData} onCopyUsed={() => setCopyData(null)} />}
+        {tab === "make" && <MakeTab apiKey={apiKey} avatars={avatars} voices={voices} presets={presets} onLoadAssets={loadAssets} onAddHistory={addHistory} onSavePreset={savePresets} copyData={copyData} onCopyUsed={() => setCopyData(null)} anthropicKey={anthropicKey} />}
         {tab === "convert" && <ConvertTab apiKey={apiKey} avatars={avatars} voices={voices} onLoadAssets={loadAssets} onAddHistory={addHistory} />}
         {tab === "presets" && <PresetsTab presets={presets} onSave={savePresets} avatars={avatars} voices={voices} onLoadAssets={loadAssets} />}
         {tab === "history" && <HistoryTab history={history} onCopy={handleCopyFromHistory} />}
-        {tab === "settings" && <SettingsTab apiKey={apiKey} onSave={saveKey} apiInput={apiInput} setApiInput={setApiInput} history={history} presets={presets} />}
+        {tab === "settings" && <SettingsTab apiKey={apiKey} onSave={saveKey} apiInput={apiInput} setApiInput={setApiInput} anthropicKey={anthropicKey} onSaveAnthropic={saveAnthropicKey} anthropicInput={anthropicInput} setAnthropicInput={setAnthropicInput} history={history} presets={presets} />}
       </div>
 
       <style>{`
@@ -185,7 +193,7 @@ export default function App() {
 // ════════════════════════════════════════════════════════════
 // TAB: 台本→動画
 // ════════════════════════════════════════════════════════════
-function MakeTab({ apiKey, avatars, voices, presets, onLoadAssets, onAddHistory, onSavePreset, copyData, onCopyUsed }) {
+function MakeTab({ apiKey, avatars, voices, presets, onLoadAssets, onAddHistory, onSavePreset, copyData, onCopyUsed, anthropicKey }) {
   const [step, setStep] = useState(0);
   const [preset, setPreset] = useState(null);
   const [locked, setLocked] = useState(false);
@@ -226,7 +234,7 @@ function MakeTab({ apiKey, avatars, voices, presets, onLoadAssets, onAddHistory,
     setSLoading(true);
     try {
       const tmpl = preset?.scriptTemplate ? `テンプレート参考：\n${preset.scriptTemplate}\n\n` : "";
-      setScript(await callClaude(`${tmpl}AI動画台本専門家として以下の情報をもとに60秒以内の動画台本を作成してください。\n商品:${form.product}\n事業:${form.bizType}\nターゲット:${form.target||"中小企業経営者"}\n悩み:${form.problem||"動画制作に困っている"}\n特徴:${form.features||"顔出し不要・AI活用・量産可能"}\nCTA:${form.cta||"お気軽にお問い合わせください"}\n条件:1文20字以内・ですます調・句読点丁寧・数字に読み仮名・台本本文のみ出力`));
+      setScript(await callClaude(`${tmpl}AI動画台本専門家として以下の情報をもとに60秒以内の動画台本を作成してください。\n商品:${form.product}\n事業:${form.bizType}\nターゲット:${form.target||"中小企業経営者"}\n悩み:${form.problem||"動画制作に困っている"}\n特徴:${form.features||"顔出し不要・AI活用・量産可能"}\nCTA:${form.cta||"お気軽にお問い合わせください"}\n条件:1文20字以内・ですます調・句読点丁寧・数字に読み仮名・台本本文のみ出力`, anthropicKey));
     } catch { setScript("生成に失敗しました。再試行してください。"); }
     setSLoading(false);
   };
@@ -829,7 +837,7 @@ function HistoryTab({ history, onCopy }) {
 // ════════════════════════════════════════════════════════════
 const ADMIN_PASS = "coolworks2024"; // ← ここでパスワードを変更できます
 
-function SettingsTab({ apiKey, onSave, apiInput, setApiInput, history, presets }) {
+function SettingsTab({ apiKey, onSave, apiInput, setApiInput, anthropicKey, onSaveAnthropic, anthropicInput, setAnthropicInput, history, presets }) {
   const [authed, setAuthed] = useState(false);
   const [passInput, setPassInput] = useState("");
   const [passErr, setPassErr] = useState(false);
@@ -920,8 +928,63 @@ function SettingsTab({ apiKey, onSave, apiInput, setApiInput, history, presets }
             </div>
 
             <Btn onClick={handleSave} variant="primary" style={{ width: "100%" }}>
-              {saved ? "✅ 保存しました" : "💾 APIキーを保存する"}
+              {saved ? "✅ 保存しました" : "💾 HeyGen APIキーを保存する"}
             </Btn>
+          </Panel>
+
+          <Panel title="🤖 Claude（Anthropic）APIキー設定" accent="#7C5CFC">
+            <div style={{ marginBottom: 12, padding: "10px 12px", background: "#030810", borderRadius: 8, border: "1px solid #0F1A30" }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#64748B", marginBottom: 6 }}>現在の設定</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div style={{ width: 10, height: 10, borderRadius: "50%", background: anthropicKey ? "#10B981" : "#F59E0B" }} />
+                <span style={{ fontSize: 13, fontWeight: 700, color: anthropicKey ? "#10B981" : "#F59E0B" }}>
+                  {anthropicKey ? "設定済み（独立運用モード）" : "未設定（Claude.ai経由モード）"}
+                </span>
+              </div>
+              {anthropicKey && (
+                <div style={{ marginTop: 6, fontSize: 11, color: "#334155", fontFamily: "monospace" }}>
+                  {anthropicKey.slice(0, 10) + "••••••••••••••••••••••••"}
+                </div>
+              )}
+            </div>
+
+            <div style={{ marginBottom: 10, padding: "10px 12px", background: "#0A1628", borderRadius: 8, border: "1px solid #7C5CFC30", fontSize: 12, color: "#64748B", lineHeight: 1.8 }}>
+              <div style={{ fontWeight: 700, color: "#94A3B8", marginBottom: 6 }}>2つの動作モード</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ padding: "8px 10px", background: "#0F1828", borderRadius: 6 }}>
+                  <div style={{ color: "#F59E0B", fontWeight: 700, fontSize: 11 }}>🟡 Claude.ai経由モード（キー未設定時）</div>
+                  <div style={{ color: "#475569", fontSize: 11, marginTop: 2 }}>Claude.aiのチャット画面上でツールを使う場合。追加費用なし。</div>
+                </div>
+                <div style={{ padding: "8px 10px", background: "#0F1828", borderRadius: 6 }}>
+                  <div style={{ color: "#10B981", fontWeight: 700, fontSize: 11 }}>🟢 独立運用モード（キー設定時）</div>
+                  <div style={{ color: "#475569", fontSize: 11, marginTop: 2 }}>VercelのURLから直接アクセスする場合。Anthropic APIキーが必要（1本あたり数円）。</div>
+                </div>
+              </div>
+            </div>
+
+            <FL label="Anthropic APIキーを入力（独立運用する場合のみ）" />
+            <input
+              value={anthropicInput}
+              onChange={e => setAnthropicInput(e.target.value)}
+              placeholder="sk-ant-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+              style={{ ...iSt, fontFamily: "monospace", marginBottom: 8 }}
+            />
+            <div style={{ marginBottom: 10, padding: "9px 11px", background: "#0A1628", borderRadius: 8, border: "1px solid #141F38", fontSize: 11, color: "#475569", lineHeight: 1.8 }}>
+              <b style={{ color: "#94A3B8" }}>取得手順：</b><br />
+              1. <a href="https://console.anthropic.com" target="_blank" rel="noreferrer" style={{ color: "#7C5CFC" }}>console.anthropic.com</a> にアクセス<br />
+              2. 「API Keys」→「Create Key」<br />
+              3. 表示されたキー（sk-ant-で始まる）をコピー
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <Btn onClick={() => { onSaveAnthropic(); setSaved(true); setTimeout(() => setSaved(false), 2500); }} variant="primary" style={{ flex: 1 }}>
+                💾 Anthropicキーを保存する
+              </Btn>
+              {anthropicKey && (
+                <Btn onClick={() => { setAnthropicInput(""); onSaveAnthropic(); }} variant="ghost">
+                  クリア
+                </Btn>
+              )}
+            </div>
           </Panel>
 
           <Panel title="📋 プランと機能の対応表" accent="#7C5CFC">
