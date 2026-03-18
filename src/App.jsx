@@ -32,18 +32,45 @@ function fmtSize(b) { return b < 1048576 ? `${(b/1024).toFixed(1)} KB` : `${(b/1
 
 // ─── CLAUDE API ─────────────────────────────────────────────
 async function callClaude(prompt, anthropicKey) {
-  const headers = { "Content-Type": "application/json" };
-  // Vercel独立運用時はAnthropicキーを直接使用、Claude.ai上ではキー不要
-  if (anthropicKey) headers["x-api-key"] = anthropicKey;
+  // Vercel独立運用：AnthropicキーをAuthorizationヘッダーで渡す
+  if (anthropicKey) {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": anthropicKey,
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true",
+      },
+      body: JSON.stringify({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 1000,
+        messages: [{ role: "user", content: prompt }]
+      })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err?.error?.message || `APIエラー: ${res.status}`);
+    }
+    const d = await res.json();
+    if (d.error) throw new Error(d.error.message || "Claude APIエラー");
+    return d.content?.[0]?.text || "";
+  }
+
+  // Claude.ai上（Artifactとして動作）：キー不要
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
-    headers,
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
+      model: "claude-haiku-4-5-20251001",
       max_tokens: 1000,
       messages: [{ role: "user", content: prompt }]
     })
   });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err?.error?.message || `APIエラー: ${res.status} - Anthropicキーが必要な場合は設定タブで入力してください`);
+  }
   const d = await res.json();
   if (d.error) throw new Error(d.error.message || "Claude APIエラー");
   return d.content?.[0]?.text || "";
@@ -235,7 +262,7 @@ function MakeTab({ apiKey, avatars, voices, presets, onLoadAssets, onAddHistory,
     try {
       const tmpl = preset?.scriptTemplate ? `テンプレート参考：\n${preset.scriptTemplate}\n\n` : "";
       setScript(await callClaude(`${tmpl}AI動画台本専門家として以下の情報をもとに60秒以内の動画台本を作成してください。\n商品:${form.product}\n事業:${form.bizType}\nターゲット:${form.target||"中小企業経営者"}\n悩み:${form.problem||"動画制作に困っている"}\n特徴:${form.features||"顔出し不要・AI活用・量産可能"}\nCTA:${form.cta||"お気軽にお問い合わせください"}\n条件:1文20字以内・ですます調・句読点丁寧・数字に読み仮名・台本本文のみ出力`, anthropicKey));
-    } catch { setScript("生成に失敗しました。再試行してください。"); }
+    } catch(e) { setScript(`❌ 台本生成エラー：${e.message || "不明なエラー"}\n\n【解決方法】\nVercelのURLでお使いの場合は⚙️設定タブ→Anthropic APIキーを設定してください。\nClaude.aiのチャット上でお使いの場合は再試行してください。`); }
     setSLoading(false);
   };
 
@@ -938,7 +965,7 @@ function SettingsTab({ apiKey, onSave, apiInput, setApiInput, anthropicKey, onSa
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <div style={{ width: 10, height: 10, borderRadius: "50%", background: anthropicKey ? "#10B981" : "#F59E0B" }} />
                 <span style={{ fontSize: 13, fontWeight: 700, color: anthropicKey ? "#10B981" : "#F59E0B" }}>
-                  {anthropicKey ? "設定済み（独立運用モード）" : "未設定（Claude.ai経由モード）"}
+                  {anthropicKey ? "設定済み（独立運用モード）" : "未設定（Vercelで使う場合は設定が必要）"}
                 </span>
               </div>
               {anthropicKey && (
