@@ -288,10 +288,27 @@ function MakeTab({ apiKey, avatars, voices, presets, onLoadAssets, onAddHistory,
     setStep(2); setErr(""); setProgress(10); setResultUrl(null);
     try {
       const res = await makeVideo({ key: apiKey, avatarId: avId, voiceId: voId, script, bgColor: bg });
+      // デバッグ用：レスポンス全体を確認
+      console.log("HeyGen response:", JSON.stringify(res));
       const id = res?.data?.video_id;
-      if (id) { setVideoId(id); startPoll(id); }
-      else { setErr(res?.message || "動画生成の開始に失敗しました。"); setStep(1); }
-    } catch { setErr("APIエラーが発生しました。"); setStep(1); }
+      if (id) {
+        setVideoId(id); startPoll(id);
+      } else {
+        // エラー詳細を表示
+        const errCode = res?.code || res?.error?.code || "";
+        const errMsg = res?.message || res?.error?.message || res?.data?.message || JSON.stringify(res);
+        let hint = "";
+        if (errCode === 40102 || String(errMsg).includes("credit")) hint = "\n→ HeyGenのクレジットが不足しています。heygen.comでクレジットを追加してください。";
+        else if (errCode === 40101 || String(errMsg).includes("auth") || String(errMsg).includes("key")) hint = "\n→ APIキーが無効です。設定タブで再入力してください。";
+        else if (String(errMsg).includes("avatar")) hint = "\n→ アバターIDが無効です。別のアバターを選択してください。";
+        else if (String(errMsg).includes("voice")) hint = "\n→ 音声IDが無効です。別の音声を選択してください。";
+        setErr(`動画生成の開始に失敗しました。\nエラー: ${errMsg}${hint}`);
+        setStep(1);
+      }
+    } catch(e) {
+      setErr(`通信エラー: ${e.message || "不明なエラー"}\n→ ネットワーク接続とAPIキーを確認してください。`);
+      setStep(1);
+    }
   };
 
   const startPoll = (id) => {
@@ -306,7 +323,12 @@ function MakeTab({ apiKey, avatars, voices, presets, onLoadAssets, onAddHistory,
           clearInterval(poll.current); setProgress(100);
           const url = res?.data?.video_url; setResultUrl(url); setStep(3);
           await onAddHistory({ id, url, product: form.product, bizType: form.bizType, presetName: preset?.name || "なし", avatarName: selAv?.avatar_name || preset?.avatarName, type: "make", createdAt: new Date().toLocaleString("ja-JP") });
-        } else if (s === "failed") { clearInterval(poll.current); setErr("動画生成に失敗しました。"); setStep(1); }
+        } else if (s === "failed") {
+          clearInterval(poll.current);
+          const errMsg = res?.data?.error || "不明なエラー";
+          setErr(`レンダリングに失敗しました。\nエラー: ${errMsg}\n\n【よくある原因】\n・台本が長すぎる（300文字以内に短縮してください）\n・アバターIDが無効（別のアバターを選んでください）\n・HeyGenのクレジット不足`);
+          setStep(1);
+        }
       } catch {}
     }, 5000);
   };
